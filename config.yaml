@@ -1,0 +1,34 @@
+run:
+  headless: true
+  timeout_ms: 45000
+  delay_seconds: 2.0
+  retries: 2
+
+targets:
+  users: []
+  users_file: data/influencer_accounts.txt
+  hashtags: []
+
+limits:
+  max_videos_per_target: 0
+
+filters:
+  min_videos_per_author: 5
+  min_median_play_count: 20000
+  min_avg_like_count: 1000
+  excluded_username_keywords:
+    - tv
+    - haber
+    - news
+    - gazete
+    - resmi
+    - official
+    - kurumsal
+  excluded_description_keywords:
+    - son dakika
+    - haber
+    - gündem
+
+output:
+  csv_path: data/tiktok_videos.csv
+  sqlite_path: data/tiktok_videos.db

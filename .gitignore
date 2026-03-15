@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+
+# Virtual/conda env
+env/
+venv/
+*.env
+*.sqlite
+*.db
+data/
+
+# Raster outputs / big files
+sentinel_out/
+*.tif
+*.tiff
+
+# Node / frontend
+ui/node_modules/
+ui/dist/
+ui/.vite/
+
+# VS Code & OS
+.DS_Store
+.vscode/
+.idea/
