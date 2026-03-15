@@ -1,18 +1,16 @@
-# TikTok Public Metadata Collector
+# TikTok Influencer Metadata Collector
 
-This starter project collects **publicly visible** TikTok metadata from user and hashtag pages, then writes results to CSV + SQLite.
+Bu proje, TikTok'taki **public (herkese açık)** hesaplardan video metadatası toplar ve çıktıyı CSV + SQLite olarak kaydeder.
 
-Extraction backend order:
-- `yt-dlp` (primary, more resilient)
-- Playwright page parser (fallback)
+Öncelikli kullanım amacı: **influencer hesap analizi**.
 
-## Important
+## Önemli Not
 
-- Follow TikTok Terms and local privacy/data laws.
-- Use this only for legitimate research/analytics use cases.
-- Site structure changes may break extraction over time.
+- TikTok kullanım koşullarına ve yerel KVKK/gizlilik kurallarına uyun.
+- Sadece meşru analiz/araştırma senaryolarında kullanın.
+- TikTok tarafındaki değişiklikler zaman zaman akışı etkileyebilir.
 
-## What it collects
+## Neleri toplar?
 
 - `video_id`
 - `url`
@@ -24,7 +22,7 @@ Extraction backend order:
 - `source_target`
 - `collected_at_utc`
 
-## 1) Install
+## Kurulum
 
 ```bash
 python -m venv .venv
@@ -34,43 +32,73 @@ python -m playwright install chromium
 pip install -e .
 ```
 
-## 2) Configure targets
+## Hızlı Başlangıç (Influencer odaklı)
 
-Edit [config.yaml](config.yaml):
+### 1) Hesap listesini düzenle
 
-- `targets.users`: usernames without `@`
-- `targets.users_file`: line-by-line username file (best for influencer lists)
-- `targets.hashtags`: hashtags without `#`
-- `limits.max_videos_per_target`: per target cap (`0` = all available)
-- `filters.*`: creator-level influencer filters (views/likes/keyword exclusions)
+[data/influencer_accounts.txt](data/influencer_accounts.txt) dosyasına her satıra bir kullanıcı adı yaz:
 
-Optional runtime env vars in [\.env.example](.env.example):
+- `@` koyma
+- yorum satırı için `#` kullanabilirsin
 
-- `TIKTOK_PROXY`
-- `TIKTOK_USER_AGENT`
+Örnek:
 
-Copy `.env.example` to `.env` if needed.
-
-## 3) Run
-
-```bash
-tiktok-collect --config config.yaml
+```text
+danlabilic
+reynmen
+cznburak
 ```
 
-## Output
+### 2) Ayarları kontrol et
+
+[config.yaml](config.yaml) içinde kritik alanlar:
+
+- `targets.users_file`: hesap listesinin dosya yolu
+- `limits.max_videos_per_target`:
+	- `0` = mümkün olan tüm videolar
+	- `N` = hesap başına N video
+- `filters.min_videos_per_author`: minimum video sayısı eşiği
+- `filters.min_median_play_count`: minimum median izlenme
+- `filters.min_avg_like_count`: minimum ortalama like
+- `filters.excluded_username_keywords`: kullanıcı adından eleme
+- `filters.excluded_description_keywords`: içerik metninden eleme
+
+### 3) Çalıştır
+
+```bash
+python run.py --config config.yaml
+```
+
+> Alternatif komut:
+>
+> ```bash
+> tiktok-collect --config config.yaml
+> ```
+
+## Çıktılar
 
 - CSV: `data/tiktok_videos.csv`
-- SQLite: `data/tiktok_videos.db` (table: `tiktok_videos`)
+- SQLite: `data/tiktok_videos.db` (tablo: `tiktok_videos`)
 
-## Notes
+## Mimari (kısa)
 
-- This extractor reads page-embedded JSON (`__UNIVERSAL_DATA_FOR_REHYDRATION__` / `SIGI_STATE`).
-- If schema changes, update parser logic in [src/tiktok_collector/collector.py](src/tiktok_collector/collector.py).
+Toplama sırası:
 
-## Troubleshooting
+1. `yt-dlp` (primary)
+2. Playwright parser (fallback)
 
-- If you still get `Collected 0 records`, try:
-	- setting a proxy in `.env` (`TIKTOK_PROXY=...`)
-	- changing targets in [config.yaml](config.yaml) to active public accounts
-	- increasing `run.delay_seconds` and `run.retries`
-- On some systems, SSL trust chains can fail; the `yt-dlp` backend already runs with certificate checks disabled to reduce this issue.
+Bir hedef hesap hata verirse süreç tamamen durmaz; hesap atlanıp diğerlerine devam edilir.
+
+## Sorun Giderme
+
+- `Collected 0 records` görürsen:
+	- hesap listesini kontrol et ([data/influencer_accounts.txt](data/influencer_accounts.txt))
+	- filtreleri gevşet (`min_median_play_count`, `min_avg_like_count`)
+	- [config.yaml](config.yaml) içinde `run.delay_seconds` ve `run.retries` artır
+- Ağ/erişim sorunu varsa `.env` içinde proxy kullan:
+	- `TIKTOK_PROXY=...`
+	- `TIKTOK_USER_AGENT=...`
+
+## Geliştirici Notu
+
+Ana toplama akışı: [src/tiktok_collector/collector.py](src/tiktok_collector/collector.py)
