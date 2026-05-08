@@ -38,6 +38,7 @@ _NEXT_DATA_RE = re.compile(
     r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>',
     re.DOTALL,
 )
+_HASHTAG_RE = re.compile(r"(?<!\w)#[\w]+", re.UNICODE)
 
 
 
@@ -55,6 +56,52 @@ def _to_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _to_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_iso_to_weekend_flag(value: str | None) -> int | None:
+    if not value:
+        return None
+    try:
+        normalized = value.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(normalized)
+        return 1 if dt.weekday() >= 5 else 0
+    except ValueError:
+        return None
+
+
+def _count_hashtags(description: str | None) -> int:
+    if not description:
+        return 0
+    return len(_HASHTAG_RE.findall(description))
+
+
+def _calc_engagement_rate(
+    play_count: int | None,
+    digg_count: int | None,
+    comment_count: int | None,
+    share_count: int | None,
+) -> float | None:
+    if not play_count or play_count <= 0:
+        return None
+    interactions = (digg_count or 0) + (comment_count or 0) + (share_count or 0)
+    return round(interactions / play_count, 6)
+
+
+def _normalize_duration_seconds(raw_duration: Any) -> float | None:
+    duration = _to_float(raw_duration)
+    if duration is None:
+        return None
+    # Some sources may provide milliseconds.
+    if duration > 1000:
+        duration = duration / 1000.0
+    return round(duration, 3)
 
 
 
@@ -82,7 +129,9 @@ def _walk(obj: Any):
 
 
 
-def _video_from_candidate(candidate: dict[str, Any], source_target: str) -> VideoRecord | None:
+def _video_from_candidate(
+    candidate: dict[str, Any], source_target: str, author_category: str | None = None
+) -> VideoRecord | None:
     video_id = candidate.get("id") or candidate.get("videoId")
     if not video_id:
         return None
@@ -97,6 +146,13 @@ def _video_from_candidate(candidate: dict[str, Any], source_target: str) -> Vide
         or candidate.get("author", {}).get("uniqueId")
     )
     author_id = author.get("id") or candidate.get("authorId")
+    description = candidate.get("desc") or candidate.get("description")
+    create_time_utc = _parse_epoch_to_iso(candidate.get("createTime"))
+    digg_count = _to_int(stats.get("diggCount"))
+    comment_count = _to_int(stats.get("commentCount"))
+    share_count = _to_int(stats.get("shareCount"))
+    play_count = _to_int(stats.get("playCount") or video.get("playCount"))
+    duration_seconds = _normalize_duration_seconds(video.get("duration") or candidate.get("duration"))
 
     video_id = str(video_id)
     url = f"https://www.tiktok.com/@{username}/video/{video_id}" if username else f"https://www.tiktok.com/video/{video_id}"
@@ -106,19 +162,26 @@ def _video_from_candidate(candidate: dict[str, Any], source_target: str) -> Vide
         url=url,
         author_username=username,
         author_id=str(author_id) if author_id is not None else None,
-        description=candidate.get("desc") or candidate.get("description"),
-        create_time_utc=_parse_epoch_to_iso(candidate.get("createTime")),
-        digg_count=_to_int(stats.get("diggCount")),
-        comment_count=_to_int(stats.get("commentCount")),
-        share_count=_to_int(stats.get("shareCount")),
-        play_count=_to_int(stats.get("playCount") or video.get("playCount")),
+        author_category=author_category,
+        description=description,
+        create_time_utc=create_time_utc,
+        duration_seconds=duration_seconds,
+        hashtag_count=_count_hashtags(description),
+        engagement_rate=_calc_engagement_rate(play_count, digg_count, comment_count, share_count),
+        is_weekend=_parse_iso_to_weekend_flag(create_time_utc),
+        digg_count=digg_count,
+        comment_count=comment_count,
+        share_count=share_count,
+        play_count=play_count,
         source_target=source_target,
         collected_at_utc=VideoRecord.now_utc_iso(),
     )
 
 
 
-def _collect_from_page_html(html: str, source_target: str, limit: int) -> list[VideoRecord]:
+def _collect_from_page_html(
+    html: str, source_target: str, limit: int, author_category: str | None = None
+) -> list[VideoRecord]:
     blob = _extract_json_blob(html)
     found: dict[str, VideoRecord] = {}
 
@@ -130,7 +193,7 @@ def _collect_from_page_html(html: str, source_target: str, limit: int) -> list[V
         if not has_video_shape:
             continue
 
-        record = _video_from_candidate(node, source_target)
+        record = _video_from_candidate(node, source_target, author_category=author_category)
         if record and record.video_id not in found:
             found[record.video_id] = record
             if limit > 0 and len(found) >= limit:
@@ -139,7 +202,9 @@ def _collect_from_page_html(html: str, source_target: str, limit: int) -> list[V
     return list(found.values())
 
 
-def _collect_from_payloads(payloads: list[dict[str, Any]], source_target: str, limit: int) -> list[VideoRecord]:
+def _collect_from_payloads(
+    payloads: list[dict[str, Any]], source_target: str, limit: int, author_category: str | None = None
+) -> list[VideoRecord]:
     found: dict[str, VideoRecord] = {}
 
     for payload in payloads:
@@ -154,7 +219,7 @@ def _collect_from_payloads(payloads: list[dict[str, Any]], source_target: str, l
             if not has_video_shape:
                 continue
 
-            record = _video_from_candidate(node, source_target)
+            record = _video_from_candidate(node, source_target, author_category=author_category)
             if record and record.video_id not in found:
                 found[record.video_id] = record
                 if limit > 0 and len(found) >= limit:
@@ -192,7 +257,9 @@ def _attach_response_collector(page: Page, payloads: list[dict[str, Any]]) -> No
     page.on("response", _on_response)
 
 
-def _collect_target_with_ytdlp(url: str, source_target: str, limit: int) -> list[VideoRecord]:
+def _collect_target_with_ytdlp(
+    url: str, source_target: str, limit: int, author_category: str | None = None
+) -> list[VideoRecord]:
     ydl_opts: dict[str, Any] = {
         "quiet": True,
         "no_warnings": True,
@@ -234,17 +301,30 @@ def _collect_target_with_ytdlp(url: str, source_target: str, limit: int) -> list
             else:
                 page_url = f"https://www.tiktok.com/video/{video_id}"
 
+        description = entry.get("description") or entry.get("title")
+        create_time_utc = _parse_epoch_to_iso(entry.get("timestamp"))
+        digg_count = _to_int(entry.get("like_count"))
+        comment_count = _to_int(entry.get("comment_count"))
+        share_count = _to_int(entry.get("repost_count"))
+        play_count = _to_int(entry.get("view_count"))
+        duration_seconds = _normalize_duration_seconds(entry.get("duration"))
+
         record = VideoRecord(
             video_id=video_id,
             url=str(page_url),
             author_username=str(username) if username is not None else None,
             author_id=str(author_id) if author_id is not None else None,
-            description=entry.get("description") or entry.get("title"),
-            create_time_utc=_parse_epoch_to_iso(entry.get("timestamp")),
-            digg_count=_to_int(entry.get("like_count")),
-            comment_count=_to_int(entry.get("comment_count")),
-            share_count=_to_int(entry.get("repost_count")),
-            play_count=_to_int(entry.get("view_count")),
+            author_category=author_category,
+            description=description,
+            create_time_utc=create_time_utc,
+            duration_seconds=duration_seconds,
+            hashtag_count=_count_hashtags(description),
+            engagement_rate=_calc_engagement_rate(play_count, digg_count, comment_count, share_count),
+            is_weekend=_parse_iso_to_weekend_flag(create_time_utc),
+            digg_count=digg_count,
+            comment_count=comment_count,
+            share_count=share_count,
+            play_count=play_count,
             source_target=source_target,
             collected_at_utc=VideoRecord.now_utc_iso(),
         )
@@ -265,13 +345,16 @@ def _new_browser(playwright: Playwright, headless: bool) -> Browser:
 
 
 
-def _collect_target(url: str, source_target: str, config: AppConfig) -> list[VideoRecord]:
+def _collect_target(
+    url: str, source_target: str, config: AppConfig, author_category: str | None = None
+) -> list[VideoRecord]:
     # Preferred path: yt-dlp is usually more resilient to schema/anti-bot changes.
     try:
         ytdlp_records = _collect_target_with_ytdlp(
             url=url,
             source_target=source_target,
             limit=config.limits.max_videos_per_target,
+            author_category=author_category,
         )
         if ytdlp_records:
             return ytdlp_records
@@ -309,6 +392,7 @@ def _collect_target(url: str, source_target: str, config: AppConfig) -> list[Vid
                         html=html,
                         source_target=source_target,
                         limit=config.limits.max_videos_per_target,
+                        author_category=author_category,
                     )
                     if records:
                         return records
@@ -317,6 +401,7 @@ def _collect_target(url: str, source_target: str, config: AppConfig) -> list[Vid
                         payloads=payloads,
                         source_target=source_target,
                         limit=config.limits.max_videos_per_target,
+                        author_category=author_category,
                     )
                     return records
                 except Exception as exc:  # noqa: BLE001
@@ -330,23 +415,46 @@ def _collect_target(url: str, source_target: str, config: AppConfig) -> list[Vid
             browser.close()
 
 
-def _load_user_targets(config: AppConfig) -> list[str]:
-    users = [u.strip().lstrip("@") for u in config.targets.users if u.strip()]
+def _normalize_category_name(value: str | None) -> str | None:
+    if not value:
+        return None
+    normalized = value.strip().lower()
+    return normalized or None
+
+
+def _load_user_targets(config: AppConfig) -> list[tuple[str, str | None]]:
+    users: list[tuple[str, str | None]] = [
+        (u.strip().lstrip("@"), None) for u in config.targets.users if u.strip()
+    ]
 
     users_file = config.targets.users_file
     if users_file:
         path = Path(users_file)
         if path.exists():
+            current_category: str | None = None
             for line in path.read_text(encoding="utf-8").splitlines():
                 value = line.strip()
                 if not value or value.startswith("#"):
                     continue
-                users.append(value.lstrip("@"))
+                if value.startswith("[") and value.endswith("]"):
+                    current_category = _normalize_category_name(value[1:-1])
+                    continue
+                if ":" in value and not value.startswith("http"):
+                    category_candidate, username_candidate = value.split(":", 1)
+                    if username_candidate.strip():
+                        users.append(
+                            (
+                                username_candidate.strip().lstrip("@"),
+                                _normalize_category_name(category_candidate),
+                            )
+                        )
+                        continue
+                users.append((value.lstrip("@"), current_category))
 
-    dedup: dict[str, None] = {}
-    for username in users:
-        dedup[username] = None
-    return list(dedup.keys())
+    dedup: dict[str, str | None] = {}
+    for username, category in users:
+        dedup[username] = category
+    return [(username, category) for username, category in dedup.items()]
 
 
 def _contains_any_keyword(text: str | None, keywords: list[str]) -> bool:
@@ -419,20 +527,46 @@ def _apply_influencer_filters(records: list[VideoRecord], config: AppConfig) -> 
 
 def collect_all(config: AppConfig) -> list[VideoRecord]:
     all_records: list[VideoRecord] = []
+    user_targets = _load_user_targets(config)
+    hashtag_targets = [h.strip() for h in config.targets.hashtags if h.strip()]
+    total_targets = len(user_targets) + len(hashtag_targets)
 
-    for user in _load_user_targets(config):
+    if total_targets == 0:
+        print("[INFO] No targets found. Add users or hashtags in config.")
+        return []
+
+    completed = 0
+
+    for user, author_category in user_targets:
+        completed += 1
         source_target = f"user:{user}"
         url = f"https://www.tiktok.com/@{user}"
+        print(f"[PROGRESS {completed}/{total_targets}] Collecting @{user}...")
         try:
-            all_records.extend(_collect_target(url=url, source_target=source_target, config=config))
+            target_records = _collect_target(
+                url=url,
+                source_target=source_target,
+                config=config,
+                author_category=author_category,
+            )
+            all_records.extend(target_records)
+            print(
+                f"[DONE {completed}/{total_targets}] @{user} -> {len(target_records)} videos (total={len(all_records)})"
+            )
         except Exception as exc:  # noqa: BLE001
             print(f"[SKIP] {user}: {exc}")
 
-    for hashtag in config.targets.hashtags:
+    for hashtag in hashtag_targets:
+        completed += 1
         source_target = f"hashtag:{hashtag}"
         url = f"https://www.tiktok.com/tag/{hashtag}"
+        print(f"[PROGRESS {completed}/{total_targets}] Collecting #{hashtag}...")
         try:
-            all_records.extend(_collect_target(url=url, source_target=source_target, config=config))
+            target_records = _collect_target(url=url, source_target=source_target, config=config)
+            all_records.extend(target_records)
+            print(
+                f"[DONE {completed}/{total_targets}] #{hashtag} -> {len(target_records)} videos (total={len(all_records)})"
+            )
         except Exception as exc:  # noqa: BLE001
             print(f"[SKIP] #{hashtag}: {exc}")
 

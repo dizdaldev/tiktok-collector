@@ -16,8 +16,13 @@ Bu proje, TikTok'taki **public (herkese açık)** hesaplardan video metadatası 
 - `url`
 - `author_username`
 - `author_id`
+- `author_category`
 - `description`
 - `create_time_utc`
+- `duration_seconds`
+- `hashtag_count`
+- `engagement_rate`
+- `is_weekend`
 - `digg_count`, `comment_count`, `share_count`, `play_count`
 - `source_target`
 - `collected_at_utc`
@@ -40,14 +45,23 @@ pip install -e .
 
 - `@` koyma
 - yorum satırı için `#` kullanabilirsin
+- kategori etiketi için başlık kullan: `[food]`, `[tech]`, `[entertainment]`
 
 Örnek:
 
 ```text
+[food]
+cznburak
+
+[tech]
+alperrende
+
+[entertainment]
 danlabilic
 reynmen
-cznburak
 ```
+
+Bu kategori etiketi çıktıdaki `author_category` kolonuna yazılır.
 
 ### 2) Ayarları kontrol et
 

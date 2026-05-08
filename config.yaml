@@ -13,9 +13,9 @@ limits:
   max_videos_per_target: 0
 
 filters:
-  min_videos_per_author: 5
-  min_median_play_count: 20000
-  min_avg_like_count: 1000
+  min_videos_per_author: 1
+  min_median_play_count: 1
+  min_avg_like_count: 1
   excluded_username_keywords:
     - tv
     - haber
